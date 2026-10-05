@@ -1,0 +1,17 @@
+# 统一换行符策略:入库一律 LF,检出也不改写(消除 "LF will be replaced by CRLF" 警告)
+* text=auto eol=lf
+
+# Windows 批处理/脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件不做任何转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.ttf   binary
+*.otf   binary
+*.zip   binary
