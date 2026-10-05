@@ -9,6 +9,11 @@ The bot reads the question number, computes which bits to toggle, clicks the bit
 its index, elapsed time and result. Verified full clear with zero wrong answers:
 **63/63** on the unsigned level and **53/53** on the signed (negative) level.
 
+## Demo
+
+Live run covering both the Binary Racer and Negative-number levels:
+**[Watch on Bilibili](https://www.bilibili.com/video/BV1H1Hp64Ese)**
+
 ## How it works
 
 *Turing Complete* uses its own GLFW/OpenGL engine — the accessibility tree is empty and
