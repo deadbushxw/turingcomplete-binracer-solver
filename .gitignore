@@ -1,0 +1,27 @@
+# 设计规划文档(不上传)
+PLAN.md
+
+# 运行产物(含屏幕截图/日志,属于本机隐私,绝不入库)
+logs/
+*.log
+standalone_stdout.txt
+console.txt
+
+# 第三方游戏资源(版权属于游戏,不要分发)
+assets/font/
+assets/refs/
+
+# 开发期草稿(含本机路径)
+dev/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
