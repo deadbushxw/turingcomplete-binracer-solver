@@ -1,4 +1,4 @@
-# Turing Complete · Binary Racer / Negative Numbers Auto-Solver
+# Turing Complete · Binary Racer / Negative Numbers / Hexadecimal Speedrun Auto-Solver
 
 [中文](README.md) | **English**
 
@@ -14,6 +14,14 @@ its index, elapsed time and result. Verified full clear with zero wrong answers:
 Live run covering both the Binary Racer and Negative-number levels:
 **[Watch on Bilibili](https://www.bilibili.com/video/BV1H1Hp64Ese)**
 
+## Results
+
+| Level | Question style | Score |
+| --- | --- | --- |
+| Binary Racer | `二进制下，37 如何表示?` | **63/63**, level 7 (max) |
+| Negative numbers | `有符号二进制的 -5 如何表示?` | **53/53**, level 6 (max) |
+| Hexadecimal speedrun | `十六进制的 0x1F 如何表示?` | **63/63**, level 7 (max) |
+
 ## How it works
 
 *Turing Complete* uses its own GLFW/OpenGL engine — the accessibility tree is empty and
@@ -22,7 +30,7 @@ Live run covering both the Binary Racer and Negative-number levels:
 | Step | Approach |
 | --- | --- |
 | Capture | DPI-aware screen grab of the **game window rectangle only**, scaled into a fixed "frame space" (1568×980). Works even when the window is not fullscreen. |
-| Recognition | Candidate digits are rendered offline with the game's own font and matched against the on-screen orange glyphs by normalised cross-correlation (NCC). Real questions score 0.86–0.99. A leading wide-and-short glyph is read as a minus sign. |
+| Recognition | Candidate glyphs are rendered offline with the game font and matched against the on-screen orange glyphs by normalised cross-correlation (NCC). Real questions score 0.86–0.99. Three notations are auto-detected: **decimal**, **signed decimal** and **hexadecimal (`0x1F`)**. A leading wide-and-short glyph is a minus sign; a `0` followed by a short squarish glyph is the `0x` prefix. |
 | Locating | The 8 bit chips are validated as a rigid grid (equal spacing, single row). Any other screen becomes `unknown` and is **never clicked blindly**. |
 | Solving | Target `v` → toggle the bits where `v & bit`. Python's `&` is two's complement for negative values, so the unsigned and signed levels share the same line of code. |
 | Verification | Before submitting: (1) all 8 chip states must match the target, and (2) if the game shows `= sum`, the reading must equal the target. Higher levels hide the sum display, in which case the chip states are authoritative. |

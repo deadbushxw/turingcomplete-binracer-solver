@@ -160,19 +160,26 @@ def blobs(mask: np.ndarray, min_area: int = 200, roi=None) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- glyph matching
-def render_digit(digit: int, size: int) -> np.ndarray:
-    key = (digit, size)
-    cached = _TEMPLATE_CACHE.get(key)
-    if cached is not None:
-        return cached
+_GLYPH_CACHE: dict = {}
+
+
+def render_char(ch: str, size: int) -> np.ndarray:
+    key = (ch, size)
+    got = _GLYPH_CACHE.get(key)
+    if got is not None:
+        return got
     font = ImageFont.truetype(font_path(), size)
-    im = Image.new("L", (160, 160), 0)
-    ImageDraw.Draw(im).text((30, 30), str(digit), 255, font=font)
+    im = Image.new("L", (200, 180), 0)
+    ImageDraw.Draw(im).text((40, 40), ch, 255, font=font)
     a = np.array(im)
     ys, xs = np.where(a > 100)
     m = (a[ys.min():ys.max() + 1, xs.min():xs.max() + 1] > 100).astype(np.uint8) * 255
-    _TEMPLATE_CACHE[key] = m
+    _GLYPH_CACHE[key] = m
     return m
+
+
+def render_digit(digit: int, size: int) -> np.ndarray:
+    return render_char(str(digit), size)
 
 
 def render_text(text: str, size: int) -> np.ndarray:
@@ -203,41 +210,69 @@ def ncc(a: np.ndarray, b: np.ndarray) -> float:
     return float((PA * PB).sum() / d) if d else 0.0
 
 
-def classify_glyph(glyph: np.ndarray, sizes=QUESTION_SIZES, digits=range(10)):
-    """Return (digit, score, margin) for a tight-cropped glyph mask."""
+DEC_CHARS = "0123456789"
+HEX_CHARS = "0123456789ABCDEFabcdef"
+
+
+def classify_glyph(glyph: np.ndarray, sizes=QUESTION_SIZES, chars=DEC_CHARS):
+    """-> (char, score, margin) for one tight-cropped glyph against *chars*."""
     h = glyph.shape[0]
     ranked = []
-    for d in digits:
-        templ = [render_digit(d, s) for s in sizes]
+    for c in chars:
+        templ = [render_char(c, s) for s in sizes]
         templ = [t for t in templ if abs(t.shape[0] - h) <= 3] or templ
-        ranked.append((max(ncc(glyph, t) for t in templ), d))
-    ranked.sort(reverse=True)
+        ranked.append((max(ncc(glyph, t) for t in templ), c))
+    ranked.sort(key=lambda t: -t[0])
     best, second = ranked[0], ranked[1]
     return best[1], round(best[0], 4), round(best[0] - second[0], 4)
 
 
-def read_number(glyphs: list[np.ndarray], sizes=QUESTION_SIZES):
-    """Classify an ordered list of glyph masks -> (value, min_score, min_margin, digits).
+def read_text(glyphs: list, sizes=QUESTION_SIZES):
+    """Parse a run of glyph masks -> (value, score, margin, mode).
 
-    A leading glyph that is much wider than tall is the minus sign, so signed levels
-    ("有符号二进制的 -5 如何表示?") read as a negative value.
+    Handles every minigame format with the same glyph-level matcher (which scores
+    0.86-0.99 on real frames):
+
+      * unsigned decimal     "37"
+      * signed decimal       "-5"     (a leading wide-and-short glyph is the minus)
+      * hexadecimal          "0x1F"   (a leading "0" + short squarish "x")
     """
+    if not glyphs:
+        return None, 0.0, 0.0, "dec"
+
+    # ---- hexadecimal prefix "0x"? ----
+    if len(glyphs) >= 3:
+        h0 = glyphs[0].shape[0]
+        h1, w1 = glyphs[1].shape
+        if h1 <= 0.8 * h0 and 0.5 <= w1 / float(max(h1, 1)) <= 2.2:
+            c0, s0, _m0 = classify_glyph(glyphs[0], sizes=sizes, chars=DEC_CHARS)
+            if c0 == "0" and s0 >= 0.85:
+                chars, scores, margins = [], [], []
+                for g in glyphs[2:4]:
+                    c, s, m = classify_glyph(g, sizes=sizes, chars=HEX_CHARS)
+                    chars.append(c); scores.append(s); margins.append(m)
+                if chars:
+                    try:
+                        return int("".join(chars), 16), min(scores), min(margins), "hex"
+                    except ValueError:
+                        pass
+
+    # ---- decimal, with an optional leading minus ----
     digits, scores, margins = [], [], []
     negative = False
     for i, g in enumerate(glyphs):
         gh, gw = g.shape
         if i == 0 and gh <= 18 and gw / float(max(gh, 1)) >= 1.7:
-            negative = True
+            negative = True                      # ASCII '-' rendered as a short bar
             continue
-        d, s, m = classify_glyph(g, sizes=sizes)
-        digits.append(d); scores.append(s); margins.append(m)
+        c, s, m = classify_glyph(g, sizes=sizes, chars=DEC_CHARS)
+        digits.append(c); scores.append(s); margins.append(m)
     if not digits:
-        return None, 0.0, 0.0, []
-    value = int("".join(str(d) for d in digits))
-    return (-value if negative else value), min(scores), min(margins), digits
+        return None, 0.0, 0.0, "dec"
+    value = int("".join(digits))
+    return (-value if negative else value), min(scores), min(margins), "dec"
 
 
-# --------------------------------------------------------------------------- frame analysis
 def chips_valid(chips: list[dict], w: int, h: int) -> bool:
     """The 8 bit chips are a rigid grid: same row, ~91 px apart, at ~0.85 h.
 
@@ -335,32 +370,32 @@ def analyze(img: np.ndarray) -> dict:
     out["start_btn"] = [round(center_btns[0]["cx"]), round(center_btns[0]["cy"])] if center_btns else None
     out["button_blobs"] = [[b["x"], b["y"], b["w"], b["h"], b["area"]] for b in buttons]
 
-    # ---- target digits ----
+    # ---- target number (unsigned / signed / hex, detected from the glyphs) ----
     out["target"] = None
     if question_glyphs:
         glyphs = [om[b["y"]:b["y"] + b["h"], b["x"]:b["x"] + b["w"]] for b in question_glyphs]
-        val, score, margin, digits = read_number(glyphs, sizes=QUESTION_SIZES)
+        val, score, margin, mode = read_text(glyphs, sizes=QUESTION_SIZES)
         out["target_bbox"] = [question_glyphs[0]["x"], question_glyphs[0]["y"],
                               question_glyphs[-1]["x"] + question_glyphs[-1]["w"] - question_glyphs[0]["x"],
                               max(b["h"] for b in question_glyphs)]
         out["target_score"] = score
         out["target_margin"] = margin
-        out["target_digits"] = digits
-        out["target_glyph_sizes"] = [(g.shape[0], g.shape[1]) for g in glyphs]
-        if score >= 0.75 and margin >= 0.09:
+        out["number_mode"] = mode
+        if score >= 0.80 and margin >= 0.08:
             out["target"] = val
 
-    # ---- running sum ----
+    # ---- running readout (same three formats as the question) ----
     out["sum"] = None
     if sum_glyphs:
-        sg = [om[b["y"]:b["y"] + b["h"], b["x"]:b["x"] + b["w"]] for b in sum_glyphs]
-        val, score, margin, digits = read_number(sg, sizes=SUM_SIZES)
+        glyphs = [om[b["y"]:b["y"] + b["h"], b["x"]:b["x"] + b["w"]] for b in sum_glyphs]
+        val, score, margin, mode = read_text(glyphs, sizes=SUM_SIZES)
         out["sum_bbox"] = [sum_glyphs[0]["x"], sum_glyphs[0]["y"],
                            sum_glyphs[-1]["x"] + sum_glyphs[-1]["w"] - sum_glyphs[0]["x"],
                            max(b["h"] for b in sum_glyphs)]
         out["sum_score"] = score
         out["sum_margin"] = margin
-        if score >= 0.80 and margin >= 0.10:
+        out["sum_mode"] = mode
+        if score >= 0.80 and margin >= 0.08:
             out["sum"] = val
 
     # ---- white text left of the number = question-template fingerprint ----
@@ -384,20 +419,11 @@ def analyze(img: np.ndarray) -> dict:
 
 
 def verify_sum(img: np.ndarray, expected: int, info=None) -> dict:
-    """Independently confirm the running sum equals *expected* (render-and-compare)."""
+    """Confirm the running readout equals *expected* (value-level, format-agnostic)."""
     info = info if info is not None else analyze(img)
-    res = dict(expected=expected, read=info.get("sum"), read_score=info.get("sum_score"),
-               read_margin=info.get("sum_margin"), render_score=None, chips=[c["on"] for c in info.get("chips", [])])
-    if "sum_bbox" in info:
-        x, y, w, h = info["sum_bbox"]
-        glyphs = orange_mask(img)[y:y + h, x:x + w]
-        best = 0.0
-        for size in SUM_SIZES:
-            t = render_text(str(expected), size)
-            if abs(t.shape[0] - h) <= 3:
-                best = max(best, ncc(glyphs, t))
-        res["render_score"] = round(best, 4)
-    return res
+    return dict(expected=expected, read=info.get("sum"), read_score=info.get("sum_score"),
+                read_margin=info.get("sum_margin"), read_mode=info.get("sum_mode"),
+                render_score=info.get("sum_score"), chips=[c["on"] for c in info.get("chips", [])])
 
 
 def bits_of(value: int) -> list[int]:
